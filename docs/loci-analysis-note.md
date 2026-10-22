@@ -139,9 +139,11 @@ Two things this shows, and they are the argument for structural genotyping:
 1. The SNP-based local-ancestry metric fires where a SNP sweep exists (LCT, 2.1x, p=0.004)
    and correctly stays flat at the old-allele locus (SLC24A5).
 2. It is **depleted** at exactly the loci whose biology is structural rather than SNP-level
-   (CYP2D6 0.53x, GSTM1 0.51x), and near-blind at AMY because the duplication region carries
-   almost no common SNPs in this panel (1 variant in AMY1A +/-20 kb). Those loci need the
-   structural haplotypes - i.e. COSI-GT output - not SNP clade ages.
+   (CYP2D6 0.53x, GSTM1 0.51x). Those loci need the structural haplotypes - i.e. COSI-GT
+   output - not SNP clade ages. An earlier version of this note added "and near-blind at AMY
+   because the duplication region carries almost no common SNPs (1 variant in AMY1A +/-20 kb)".
+   **That measurement was made around the gene, not the locus, and it is wrong at locus scale**
+   - see the 2026-10-22 correction below.
 
 Note the breadth column refers to the locus's *most extreme* variant, which at a locus like
 SLC24A5 is not the canonical SNP; when the diplotype data arrive, breadth should be computed
@@ -166,6 +168,75 @@ Consequence for interpretation:
 
 So the two statistics cover different regimes, and the decision table in section 4 must be
 read with the allele's age in hand: age first, breadth only where age > tau.
+
+Measured cohort interaction (2026-10-22): at tau 200-500 in the global cohort, backgrounds are
+fragmentary - average dom_share 0.37 -> 0.49, dominant background 491 -> 1,012 haplotypes -
+because a mixed cohort holds structure far deeper than any single cutoff. Breadth therefore
+depends on a tunable constant, and tuning tau until dom_share looks convincing is optimising
+the statistic being reported. Preferred practice: keep the verdict tau-free (clade age and
+n_origins do not use tau at all), and report breadth as a PROFILE dom_share(tau) over the
+sweep, summarised by the crossover time tau* at which carriers become confined. Do not anchor
+tau to the median pairwise TMRCA of a mixed cohort: that median is dominated by
+cross-continental splits and lands near tens of thousands of generations (local tree depth at
+chr22:15 Mb is 54,327 generations), where breadth is 1 by construction.
+
+---
+
+## CORRECTION (2026-10-22): the LOCUS is the inference frame, not the gene
+
+The statement retired above ("near-blind at AMY, 1 variant in +/-20 kb") was measured around
+the gene. Measured on the BED intervals instead:
+
+| locus | BED interval (GRCh38) | span | variants (MAC >= 5) | spacing |
+|---|---|---|---|---|
+| AMY1A | chr1:103,304,997-103,901,127 | 596 kb | **667** | 1 / 893 bp |
+| GSTM1 | chr1:109,561,616-109,802,331 | 241 kb | **509** | 1 / 472 bp |
+
+AMY1A is not SNP-poor. It is one of the strongest screen passes in the 265-locus scan
+(1.69x, 629 variants scored, q = 3.0e-3). What is real is a HOLE in the middle of the locus,
+which is the duplicated gene cluster itself:
+
+```
+20 kb bins  103.305-103.625 Mb   4-124 variants per bin    <- clean left flank, 249 kb
+            103.625-103.745 Mb   3,0,1,0,0,0-9             <- the hole (~125 kb)
+            103.745-103.885 Mb   6-48 variants per bin     <- clean right flank, 126 kb
+```
+
+Segdup corroboration: the contiguous paralogous block is chr1:103,554,220-103,774,845
+(221 kb). (38 records overlap the span summing to 89.5%, which over-counts - use the
+contiguous block, not the summed overlap.)
+
+**Rules that follow, and that all locus inference must obey:**
+
+1. **Frame = the BED locus interval.** Not the SV call, not the gene. Flank widths, masks and
+   anchors are all derived from the frame per locus - never a fixed +/-20 kb or +/-200 kb
+   constant, which lands inside the hole at exactly the loci we care about.
+2. **Mask the paralogous core, then infer from the clean flanks.** Build the mask from data
+   first (bin the frame; flag bins below a fraction of the locus median density) because that
+   is usable at all 265 loci with no external input; use segdup as corroboration, not the
+   primary criterion.
+3. **The core is bracketed, which is stronger than flanked.** At AMY1A the CNV sits between a
+   249 kb clean block and a 126 kb clean block. Anchor from both sides and ask whether the two
+   sides agree on the ancestry background: agreement means the CNV arose once on one lineage;
+   disagreement means the CNV is itself an ancestry boundary (mis-assembly, or a genuinely
+   recombinant haplotype). This is a sharper test than a single flank permits.
+4. **Publish a per-locus resolution budget**: frame span, masked-core span, usable informative
+   variants (excluding sites where the allele is ancestral), spacing, and each flank's width.
+   That number is the resolution available for anchoring and segmentation, and it decides per
+   locus whether the marker set is sufficient.
+5. **Trust is separate from count.** Variants that exist inside the core can still be
+   paralogous mismapping. The exact clade-consistency test is a free mappability diagnostic:
+   a mismapped marker shows inflated n_origins against the local tree. Report compatibility per
+   bin.
+
+Consequence for the tools: `sv_anchor_match.py` currently takes fixed flank windows around the
+call, which is the wrong parameterisation for these loci; flanks should come from the frame
+minus the mask. Where a locus's resolution budget is genuinely poor, the fallback is to put
+the phased SV alleles into the ARG build itself (as biallelic sites in the tsinfer input),
+restricted to SVs that pass the clade-consistency test so that only infinite-sites-compatible
+markers are injected.
+
+---
 
 ## COSI-GT SV locus scan (265 loci, HGSVC v3 refined set)
 
@@ -210,6 +281,17 @@ chrom  pos  sample  allele1  allele2
 
 Integer labels consistent within a site; unordered diplotype (structural haplotypes are
 unphased); missing = NA or -1. This is exactly what `g1k_allele_analyzer.py --table` reads.
+
+**Unphased is not a blocker** (2026-10-22). The only ambiguity is one bit per heterozygote,
+and the question "is this allele consistent with a single origin" is exactly decidable: a clade
+C is consistent iff it contains both haplotypes of every homozygous carrier, no haplotype of a
+homozygous non-carrier, and exactly one haplotype of every heterozygote. `sv_phase_pilot.py`
+resolves this in polynomial time with no sampling - 715 carriers with 615 unknown phase bits
+were recovered as one origin at the true age - and the induced phase comes out as a by-product.
+So the allele table remains the input; phasing is not required from the caller. External
+phasers (Beagle/SHAPEIT/MVNcall) are inappropriate here: a deletion leaves carriers
+hemizygous, an inversion is an LD island, and such phasers have no model for the same allele
+arising on two branches, which is exactly the recurrence we want to measure.
 
 **2. Date table** - one row per sample:
 
