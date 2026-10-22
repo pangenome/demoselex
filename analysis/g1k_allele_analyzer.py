@@ -27,6 +27,7 @@ Usage:
   g1k_allele_analyzer.py --selftest        # LCT SNP recoded as a 2-allele diplotype
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -34,9 +35,36 @@ import numpy as np
 import pandas as pd
 import tskit
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'data/derived/g1k'
-POPFILE = OUT / 'samples_population.txt'
+
+def _resolve_argdir():
+    """Find the dated chunks. Works both in the repo and in the delivered share bundle.
+
+    Set G1K_ARG_DIR to override. Otherwise try, in order: the sticky bundle layout
+    (<script>/arg), the repo layout (<script>/../data/derived/g1k), and any ancestor
+    containing data/derived/g1k.
+    """
+    here = Path(__file__).resolve().parent
+    cands = []
+    if os.environ.get('G1K_ARG_DIR'):
+        cands.append(Path(os.environ['G1K_ARG_DIR']))
+    cands += [here / 'arg', here.parent / 'data/derived/g1k', here / 'data/derived/g1k']
+    cands += [p / 'data/derived/g1k' for p in Path(__file__).resolve().parents]
+    for c in cands:
+        if c.is_dir() and any(c.glob('chr*_*_*.dated.trees')):
+            return c
+    raise SystemExit('cannot locate the dated ARG chunks; set G1K_ARG_DIR=<dir with chr*_*.dated.trees>')
+
+
+def _resolve_popfile(argdir):
+    here = Path(__file__).resolve().parent
+    for c in (argdir / 'samples_population.txt', here / 'samples_population.txt'):
+        if c.is_file():
+            return c
+    raise SystemExit('cannot locate samples_population.txt (next to the chunks or the script)')
+
+
+OUT = _resolve_argdir()
+POPFILE = _resolve_popfile(OUT)
 TAU = 200.0
 
 
