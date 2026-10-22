@@ -97,65 +97,93 @@ def backgrounds(par, t, samples, tau):
     return out
 
 
-def analyse_locus(ts, start, pos, allele_by_hap, tau):
-    """allele_by_hap: array over haplotype index (in ts sample order) -> allele label or -1."""
+def analyse_locus(ts, start, rels, allele_by_hap, tau):
+    """allele_by_hap: array over haplotype index (in ts sample order) -> allele label or -1.
+    rels: anchor positions relative to the chunk start; per-label quantities are
+    computed at each anchor and aggregated (median + range), because a structural
+    locus spans many local trees and no single tree represents it."""
     t = ts.tables.nodes.time
-    rel = pos - start
-    tree = ts.at(rel)
-    par = tree.parent_array
     samples = ts.samples()
-    cnt = leaf_counts(tree, t, ts.num_nodes, samples)
-    # within-locus null: ages of all clades by leaf-count bin
-    nodes = np.where(par != -1)[0]
-    internal = np.unique(par[nodes])
-    null_age = {}
-    for v in internal:
-        n = int(cnt[v])
-        if n < 2:
-            continue
-        lb = int(np.floor(np.log2(n)))
-        null_age.setdefault(lb, []).append(float(t[v]))
-    null_age = {k: np.sort(np.array(v)) for k, v in null_age.items()}
-    # local backgrounds
-    bg = backgrounds(par, t, samples, tau)
-    ubg, bgcnt = np.unique(bg, return_counts=True)
-    bg_size = {int(u): int(c) for u, c in zip(ubg, bgcnt)}
-    rows = []
     labels = sorted({int(a) for a in allele_by_hap if a >= 0})
+    called_haps = int((allele_by_hap >= 0).sum())
+    per_anchor = []
+    for rel in rels:
+        tree = ts.at(rel)
+        par = tree.parent_array
+        cnt = leaf_counts(tree, t, ts.num_nodes, samples)
+        # within-locus null: ages of all clades by leaf-count bin
+        nodes = np.where(par != -1)[0]
+        internal = np.unique(par[nodes])
+        null_age = {}
+        for v in internal:
+            n = int(cnt[v])
+            if n < 2:
+                continue
+            lb = int(np.floor(np.log2(n)))
+            null_age.setdefault(lb, []).append(float(t[v]))
+        null_age = {k: np.sort(np.array(v)) for k, v in null_age.items()}
+        # local backgrounds
+        bg = backgrounds(par, t, samples, tau)
+        ubg, bgcnt = np.unique(bg, return_counts=True)
+        bg_size = {int(u): int(c) for u, c in zip(ubg, bgcnt)}
+        rows_at = {}
+        for lab in labels:
+            carriers = np.where(allele_by_hap == lab)[0]
+            n = len(carriers)
+            if n < 3:
+                continue
+            age = mrca_time(par, t, [samples[i] for i in carriers])
+            lb = int(np.floor(np.log2(n)))
+            pool = []
+            for b in (lb - 1, lb, lb + 1):
+                pool.extend(null_age.get(b, []))
+            pool = np.array(pool)
+            pct = 100 * float((pool < age).mean()) if len(pool) else np.nan
+            bcar = bg[carriers]
+            cnt_b = {}
+            for b in bcar:
+                cnt_b[int(b)] = cnt_b.get(int(b), 0) + 1
+            broad = [b for b, c in cnt_b.items() if c >= max(1, 0.05 * n)]
+            dom = max(cnt_b, key=cnt_b.get)
+            rows_at[lab] = dict(
+                age=round(float(age), 1) if np.isfinite(age) else np.nan,
+                age_pct=round(pct, 1),
+                n_backgrounds=len(broad), n_backgrounds_all=len(cnt_b),
+                dom_share=round(cnt_b[dom] / n, 3),
+                dom_freq=round(cnt_b[dom] / max(bg_size.get(dom, 0), 1), 3),
+                background_n=bg_size.get(dom, 0))
+        per_anchor.append(rows_at)
+    rows = []
     for lab in labels:
-        carriers = np.where(allele_by_hap == lab)[0]
-        n = len(carriers)
+        n = int((allele_by_hap == lab).sum())
         if n < 3:
             continue
-        age = mrca_time(par, t, [samples[i] for i in carriers])
-        lb = int(np.floor(np.log2(n)))
-        pool = []
-        for b in (lb - 1, lb, lb + 1):
-            pool.extend(null_age.get(b, []))
-        pool = np.array(pool)
-        pct = 100 * float((pool < age).mean()) if len(pool) else np.nan
-        # backgrounds of carriers
-        bcar = bg[carriers]
-        cnt_b = {}
-        for b in bcar:
-            cnt_b[int(b)] = cnt_b.get(int(b), 0) + 1
-        broad = [b for b, c in cnt_b.items() if c >= max(1, 0.05 * n)]
-        dom = max(cnt_b, key=cnt_b.get)
-        rows.append(dict(allele=lab, n=n, freq=round(n / len(allele_by_hap), 4),
-                         age=round(float(age), 1) if np.isfinite(age) else np.nan,
-                         age_pct=round(pct, 1),
-                         n_backgrounds=len(broad), n_backgrounds_all=len(cnt_b),
-                         dom_share=round(cnt_b[dom] / n, 3),
-                         dom_freq=round(cnt_b[dom] / max(bg_size.get(dom, 0), 1), 3),
-                         background_n=bg_size.get(dom, 0)))
+        sts = [d[lab] for d in per_anchor if lab in d]
+        if not sts:
+            continue
+        med = lambda k: float(np.median([s[k] for s in sts if not pd.isna(s[k])]))
+        ages = [s['age'] for s in sts if not pd.isna(s.get('age', np.nan))]
+        rows.append(dict(allele=lab, n=n, freq=round(n / max(called_haps, 1), 4),
+                          age=round(med('age'), 1),
+                          age_min=round(min(ages), 1) if ages else np.nan,
+                          age_max=round(max(ages), 1) if ages else np.nan,
+                          age_pct=round(med('age_pct'), 1),
+                          n_backgrounds=round(med('n_backgrounds')),
+                          n_backgrounds_all=round(med('n_backgrounds_all')),
+                          dom_share=round(med('dom_share'), 3),
+                          dom_freq=round(med('dom_freq'), 3),
+                          background_n=round(med('background_n')),
+                          n_anchors=len(sts)))
     return rows
 
 
-def run(table, tau):
-    df = pd.read_csv(table)
+def run(table, tau, n_anchors=1):
+    df = pd.read_csv(table, sep=None, engine='python')   # sniff comma or tab
     need = {'chrom', 'pos', 'sample', 'allele1', 'allele2'}
     if not need.issubset(df.columns):
         raise SystemExit(f'table needs columns {sorted(need)}; got {list(df.columns)}')
+    for col in ('allele1', 'allele2'):
+        df[col] = pd.to_numeric(df[col], errors='coerce')  # NA -> NaN
     order = samples_in_order()
     idx = {s: i for i, s in enumerate(order)}
     out_rows = []
@@ -166,15 +194,30 @@ def run(table, tau):
             print(f'chr{chrom}:{pos}: no samples match the ARG cohort'); continue
         haps = [h for s in present for h in (2 * idx[s], 2 * idx[s] + 1)]
         f, start = chunk_for(int(chrom), int(pos))
+        end = int(f.name.split('_')[2].split('.')[0])
         ts = tskit.load(str(f)).simplify(samples=haps)
-        # map: haplotype position in ts -> allele label
+        # map: haplotype position in ts -> allele label (NA/-1 = missing)
         sample_pos = {s: k for k, s in enumerate(present)}
         allele_by_hap = np.full(len(haps), -1, dtype=np.int64)
         for r in g.itertuples():
-            k = sample_pos[r.sample]
-            allele_by_hap[2 * k] = int(r.allele1)
-            allele_by_hap[2 * k + 1] = int(r.allele2)
-        rows = analyse_locus(ts, start, int(pos), allele_by_hap, tau)
+            k = sample_pos.get(r.sample)
+            if k is None:
+                continue
+            a1, a2 = r.allele1, r.allele2
+            allele_by_hap[2 * k] = -1 if pd.isna(a1) else int(a1)
+            allele_by_hap[2 * k + 1] = -1 if pd.isna(a2) else int(a2)
+        # anchors: spread across the locus span (clamped into this chunk)
+        if n_anchors > 1 and all(c in g.columns for c in ('start', 'end')):
+            lo = max(int(g['start'].iloc[0]), start + 1)
+            hi = min(int(g['end'].iloc[0]), end - 1)
+            if hi > lo:
+                rels = [int(round(lo + i * (hi - lo) / (n_anchors - 1))) - start
+                        for i in range(n_anchors)]
+            else:
+                rels = [int(pos) - start]
+        else:
+            rels = [int(pos) - start]
+        rows = analyse_locus(ts, start, rels, allele_by_hap, tau)
         for r in rows:
             r.update(chrom=int(chrom), pos=int(pos), n_samples=len(present))
             out_rows.append(r)
@@ -218,6 +261,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--table')
     ap.add_argument('--tau', type=float, default=TAU)
+    ap.add_argument('--anchors', type=int, default=1,
+                    help='sample this many trees across each locus span and aggregate')
     ap.add_argument('--out', default=None)
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
@@ -225,7 +270,7 @@ def main():
         selftest(a.tau); return
     if not a.table:
         raise SystemExit('need --table or --selftest')
-    res = run(a.table, a.tau)
+    res = run(a.table, a.tau, a.anchors)
     out = a.out or (OUT / 'allele_locus_results.csv')
     res.to_csv(out, index=False)
     print(f'\nwrote {out}')
