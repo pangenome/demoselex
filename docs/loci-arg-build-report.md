@@ -437,10 +437,7 @@ builds, never ages).
 The delivered bundle ships `sv_phase_pilot.py`: an exact single-origin test for
 unphased SV genotypes on the dated ARG (Stage A phase-free ancestry enrichment;
 Stage B exact clade-consistency with induced phase; Stage C certificate over all
-admissible phases). We ran it verbatim (his defaults, his ARG) on ALL 256 loci
-and all 8,032 structural classes - not only the candidates - via
-`scripts/run_sv_pilot_all.sh` + `analysis/sv_pilot_scan.py`
-(`data/derived/old_dups/pilot_genome.csv`, 23,920 class x position rows).
+admissible phases). We ran it verbatim (his defaults, his ARG) on ALL 256 loci and all 8,032 structural classes - not only the candidates - via `scripts/run_sv_pilot_all.sh` + `analysis/sv_pilot_scan.py` (output: `/moosefs/laurap/old_dups/demoselex_exp/pilot_run/pilot_genome.csv`, 23,920 class x position rows - outside the repo, alongside the per-chromosome tables and logs in the same directory).
 
 **The base rate (Q2 asked genome-wide):**
 
@@ -521,8 +518,9 @@ Mendelian logic. Candidate loci: THSD7B 100%, UPF2 100%, OR2J2 98.9%,
 CFHR1 97.3%, ADGRG7 95.9%, HLA-A 96.2%, KLRC1 96.0%, ABCA13 95.4%;
 weaker: ZNF146 64.1% (hard), TARP 74.7%, CYP2D7 79.6%, OR2L2 84.8%.
 
-**Combined VCFs** (`analysis/build_combined_vcf.py`,
-`data/derived/old_dumps/combined_vcf/<LOCUS>.combined.vcf.gz`, tabix-indexed):
+**Combined VCFs** (`analysis/build_combined_vcf.py`, runner
+`scripts/run_combined_vcf_all.sh`, output
+`data/derived/old_dups/combined_vcf/<LOCUS>.combined.vcf.gz`, tabix-indexed):
 per locus, all phased 1000G panel records in [lo-5kb, hi+5kb] unchanged, plus
 one biallelic symbolic record per structural class at the locus midpoint
 (REF = reference base, ALT = <CLS:k>), GT phased in VCF hap space from the
@@ -531,3 +529,17 @@ link ('|' where decided, '/' where not - never guessed; '.' for uncalled).
 structural classes as ordinary phased variants (LD, haplotype matching,
 imputation checks) - the direct input to the lineage program's within-/
 between-background decomposition.
+
+**Outputs of this workstream** (all gitignored results, outside the repo tree
+at `/moosefs/laurap/old_dups/demoselex_exp/`):
+- `phase_link_run/<LOCUS>.csv` + merged `phase_link_genome.csv`: per
+  (sample, locus) orientation and phased cluster labels (`arg_cluster_hap0/1`)
+- `phase_link_run/trio_check.csv`: the 57,313 Mendelian checks with per-locus
+  agreement rates (use as the per-locus phase-reliability weight)
+- `data/derived/old_dups/combined_vcf/`: the 256 combined VCFs
+
+Cross-references: this is the WP2 donor-side ingredient of
+`docs/next-steps-arg-sv-phasing.md` (the 223-donor assembly-to-VCF-hap map is
+`phase_link_genome.csv` itself), and the input substrate for Q1 of
+`docs/lineage-resolved-selection.md` (within- vs between-background rise),
+which can now be computed for every class genome-wide.
