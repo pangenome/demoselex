@@ -226,31 +226,320 @@ states under high mutation turnover, and a mutation-aware null (their Fig. 5d-g
 equivalent: WF-diffusion/ApproxWF selection-coefficient estimation with a CNV
 rate parameter) is the required next step before calling them selection in print.
 
-## 9. Outputs and figures
+## 9. The tau-free breadth readout: dom_share(tau) profiles and crossover tau*
+
+Per the updated `docs/loci-analysis-note.md` (2026-10-22), breadth should not be
+read off one tau but reported as a `dom_share(tau)` profile summarized by the
+crossover depth tau* at which the dominant background comes to hold >= 50% of
+carriers. `analysis/tau_star_profiles.py` computes this per class from the
+existing multi-tau runs (three profile points at tau 200/500/1000, log-
+interpolated crossover), with the by-construction guard: confinement is only
+genealogically meaningful when tau* < clade age (at tau >= age all carriers sit
+in one background by construction; exactly 1 class genome-wide trips the guard).
+Output: `genome_wide_erikarg/tau_star_profiles.csv` (8,032 classes: 2,048
+confined at tau<=200, 2,150 with a tau* in (200,1000], 3,833 not confined
+within 1,000).
+
+Applied to the 13 ROBUST risers, the tau* readout separates them into two
+biologically distinct regimes:
+
+- **distributed risers (8)** - TARP.1, CYP2D7.1, KLRC1.1, OR2L2.1, CFHR1.1,
+  ZNF146.2, UPF2.1, ABCA13.1: flat, low profiles (dom_share 0.15-0.41 at every
+  tau); carriers never concentrate into one background at any depth. Standing
+  structural variation whose *frequency* rose in Europe, spread across
+  ancestries - the regime the original decision table has no row for, and the
+  one the mutation-aware null must cover at recurrent-CNV loci
+  (CYP2D7, KLRC1, CFHR1).
+- **confined risers (3)** - ADGRG7.4 and THSD7B.2 (dom_share >= 0.59 already at
+  tau=200), HLA-A.19 (tau* ~ 357): old but genealogically concentrated classes
+  that recently became more frequent.
+
+Figure: `plots/tau_star.png` (`analysis/plot_tau_star.py`) - (A) genome-wide
+regime map (clade age vs dom_share at tau=1000, candidates highlighted against
+the 0.5 threshold); (B) per-candidate profiles with tau* crossings.
+
+## 10. Outputs and figures
 
 All under `data/derived/old_dups/` (gitignored, results are not in the repo):
 - input tables: `alleles_clusters.tsv`, `dates.tsv`, `allele_labels_clusters.tsv`,
   `anc_country.tsv`
 - static analysis: `genome_wide/{global_tau200,global_tau500,global_tau1000,
-  AFR_tau200,...}/summary.csv`
+  AFR_tau200,...}/summary.csv` (our windowed ARG) and the identical
+  `genome_wide_erikarg/` set on the delivered full-genome ARG, plus
+  `genome_wide_erikarg/tau_star_profiles.csv` (Section 9)
 - trajectories: `genome_wide/trajectories.csv` (global),
   `trajectories_EUR.csv`, `genome_wide/by_country/<Country>.csv`
 - candidates: `rising_candidates_annotated.csv` (58, annotated),
   `rising_robustness.csv` (29 -> 13 ROBUST with per-country concordance)
-- figures (`genome_wide/plots/`, `analysis/plot_results.py`):
-  `trajectories_robust.png`, `top6_panels.png` (drift ribbons),
-  `rise_overview.png`, `locus_composition.png` / `locus_composition_all.png`
-  (per-locus class composition, Bolognini Fig 5C style), and
-  `all_loci_composition.pdf` (22-page atlas, all 256 loci, HARD loci flagged).
+- figures (`plots/`, `analysis/plot_results.py`, `plot_tau_star.py`,
+  `plot_atlas_v2.py`): `trajectories_robust.png`, `top6_panels.png` (drift
+  ribbons), `rise_overview.png`, `tau_star.png` (Section 9),
+  `locus_composition.png` / `locus_composition_all.png` (per-locus class
+  composition, Bolognini Fig 5C style), and the atlases: v1
+  `all_loci_composition.pdf` and v2 `all_loci_composition_v2.pdf` - per panel,
+  composition through time with ROBUST classes starred by tau* regime (red =
+  distributed, blue = confined), per-locus confinement summary
+  `confined k/N tau*`, and [HARD] flags.
 
-## 10. Status and next steps
+## 11. Status and next steps
 
 - ARG complete (167/167 chunks); pipeline, tests and this report on branch
   `loci-arg-pipeline` (PR to pangenome/demoselex).
 - Interpretation reminders from `docs/loci-analysis-note.md` still apply: age
   first, breadth only when age > tau; no selection coefficients yet; `age_pct`
-  is descriptive.
+  is descriptive. Breadth is now read tau-free via the dom_share(tau) profile
+  and crossover tau* (Section 9), per the updated methods note.
 - Next: selection-coefficient estimation per robust candidate with a
   mutation-aware null (recurrent-CNV loci); timing of the punctuated jumps
   against the Neolithic/Steppe transitions; copy-number-state class definitions
   at hard loci (Bolognini-style architectures).
+
+---
+
+## Appendix A. Analysis architecture: why every cohort separation exists
+
+Two core facts force the structure:
+
+1. **Tree statistics are computed inside the cohort you give them.** The analyzer
+   restricts the ARG to the samples present in the table and computes everything
+   on that subtree: the *age* of a class is the MRCA age of its carriers in that
+   cohort's tree (not an absolute number), and a *background* is a group of
+   haplotypes that coalesce within tau generations *among those people*.
+2. **The samples are not interchangeable.** Moderns are global; the ancients are
+   mostly West Eurasian; the modern panel contains close relatives (the 698 HGDP
+   samples are a related subset); Europe's population changed by layered
+   migration (hunter-gatherers -> Neolithic farmers -> Steppe). Any statistic
+   computed on a mixture inherits the mixture.
+
+### A.1 What a cohort restriction actually does: the induced subtree
+
+The restriction is explicit in the analyzer
+(`analysis/g1k_allele_analyzer.py`, per locus):
+
+```python
+ts = tskit.load(str(chunk)).simplify(samples=haps_of_the_cohort)
+```
+
+`tskit.simplify()` builds the **induced subtree**: every lineage not ancestral
+ to a retained haplotype is pruned, so the analysis runs on the genealogy of
+the cohort present in the table - and nothing else. Three consequences follow,
+and each one is why a corresponding cohort separation exists:
+
+**(a) Node dates are inherited, not recomputed - but class ages still change
+with the cohort.** The ARG is dated once, globally; simplify keeps the retained
+nodes' absolute dates. The MRCA node of two haplotypes is the same dated node in
+the full tree and in any restriction that keeps both. What *does* change is
+which carriers define the class: a class is "all carriers of the label present
+in this cohort", so a globally distributed class shrinks to its European
+carriers in an EUR run, and their MRCA can be far younger than the worldwide
+one. Age is therefore a property of the *class x cohort* pair, never of the
+label alone. (This is the mechanism behind Section 6: age-based candidates were
+regional shallow-genealogy effects - the youth was in the regional carrier set,
+not in any structural haplotype.)
+
+**(b) Backgrounds live inside the subtree - the reason the per-superpopulation
+layer exists.** A background is defined by coalescences *among the cohort's
+lineages* within tau. After simplify, non-cohort samples cannot connect two
+cohort haplotypes. In the global tree at tau=200, two haplotypes from different
+continents never coalesce (their meeting point is tens of thousands of
+generations deep), so almost every haplotype is its own background and breadth
+is vacuous. Restrict to one superpopulation and the pruned tree contains only
+that population's lineages, whose shallow within-population coalescences now
+define the backgrounds - dom_share and n_backgrounds become meaningful at
+small tau. This is the measured Layer-2 confound: global dom_share 0.37 -> 0.49
+and dominant-background size 491 -> 1,012 haps across the tau sweep.
+
+**(c) The frequency denominator follows the cohort.** `freq` divides by the
+cohort's *called* haplotypes, so the same label legitimately has different
+frequencies in global, EUR and per-country runs - a rise seen by comparing a
+restricted ancient series against a wider modern panel is partly composition,
+not biology. This is why Layer 4 restricts the moderns to EUR when the ancient
+series is European (200 global RISING -> 58 after matching), and why Layer 5
+re-checks the survivors within single countries.
+
+**Boundary note: the ancients are never in the tree.** The ARG contains only the
+3,202 moderns; every "cohort restriction" above is over moderns. The aDNA side
+enters exclusively through the temporal layer, which uses the genotype table
+plus dates and no tree at all. The two halves of the analysis (static genealogy,
+temporal trajectories) are therefore cleanly separable substrates, and the
+ROBUST verdicts rest on the temporal half.
+
+```
+LAYER 0  genotype labels         class = structural haplotype (MDS/DBSCAN clusters
+                                 over graph paths; noise keeps private labels)
+LAYER 1  the ARG                  dated genealogy of the 3,202 moderns (the substrate;
+                                 ages are substrate-dependent - compare percentiles,
+                                 never absolute ages, across builds)
+LAYER 2  static per-class stats   freq, clade age + age_pct, backgrounds(tau)
+                                 RUNS: global x tau{200,500,1000} and
+                                 per-superpop x tau200  = the "8 configurations"
+LAYER 3  candidate validation    per-anchor youth profiles
+                                 (all age-based candidates were regional effects)
+LAYER 4  temporal trajectories   class frequency through ancient time
+                                 RUNS: global moderns -> EUR-restricted moderns
+                                 (cohort matching; 200 -> 58 RISING)
+LAYER 5  within-population       per-country trajectories, 7 European countries
+         replication             (58 -> 29 -> 13 ROBUST)
+```
+
+Each separation controls one specific confound, measured on this data:
+
+| separation | confound it kills | measured effect here |
+|---|---|---|
+| per-superpopulation runs (Layer 2) | backgrounds need coalescences below tau; in the global tree at tau=200 they are ~all singletons, so breadth is vacuous | dom_share 0.37 -> 0.49 and dominant-background size 491 -> 1,012 across tau 200/500/1000 global; only population-restricted runs make tau=200 meaningful |
+| EUR-restricted moderns vs ancients (Layer 4) | comparing *European ancients* to *global moderns* turns continent composition into fake "rises" | 200 global RISING -> 58 after cohort matching (the rest were turnover) |
+| per-country stratification (Layer 5) | within-Europe migration (Steppe/Neolithic replacement) mimics selection in a pooled series | 29 -> 13 ROBUST (pooled-only classes had per-country rises of ~0.00-0.03) |
+| n >= 10 / min-class 20 | close relatives in the panel share private calls | age-1-15-generation classes with n=3-6 are relatives, not biology |
+| tractable-locus filter (ancient/modern class-distribution overlap >= 0.5) | 1x ancient calls scattering onto noise labels deflates ancient frequencies of big classes | 33/256 loci excluded (POTEH 0.04, AMY1A 0.42); the AMY1A case (Bolognini et al. 2024) is the quantified detection floor |
+
+A single run-everything-together analysis would still produce numbers for all of
+these questions - but each number would silently be answering a different, wrong
+question. This is the same reasoning that motivates tau-free verdicts in the
+updated methods note: no statistic should depend on a dial (cohort, tau) that can
+be tuned until the answer looks convincing.
+
+What tau is and is not used for (asked frequently):
+
+- tau enters exactly one function, `backgrounds()`: walk up the local tree from a
+  sample while parent age <= tau; the last node reached is that haplotype's
+  background. From it: n_backgrounds, dom_share, dom_freq, background_n.
+- tau is NOT used for freq, n, age, age_pct - and not anywhere in the temporal
+  layer (drift and permutation nulls use real dates, Ne and generations).
+- The 13 ROBUST candidates are therefore tau-independent: the tau sweep only
+  affects the descriptive background statistics, and the trajectory verdicts
+  never touch tau.
+
+## Appendix B. Cross-build validation against the delivered full-genome ARG
+
+The full-genome ARG bundle (E. Garrison, `/moosefs/erikg/demoselex-arg/`: 294 whole-
+genome chunks, its own analyzer copy with bundle path resolution, cohort file with
+identical sample order) was used to re-run all eight configurations
+(`scripts/run_genome_wide_erikarg.sh`, output `data/derived/old_dups/genome_wide_erikarg/`).
+His analyzer selftest reproduces the documented LCT calibration to the decimal
+(derived 495.3 gen / pct 20.0 / 1 background; ancestral 6,510.3 / 93.3 / 3).
+
+Genome-wide agreement, windowed rebuild vs full-genome build (all 8 configs):
+
+- carrier counts: identical for every common class (n is table-derived)
+- median-anchor age: geometric-mean ratio 1.006-1.014
+- age percentile: within 10 points for ~100% of classes
+- n_backgrounds: within +-1 for 98-99% of classes
+
+A single-anchor comparison on four chr22 loci shows large position-specific age
+differences (ratio 0.25-1.66 by locus); the 9-anchor median removes them. The
+multi-anchor aggregation is therefore robust both across positions within a locus
+and across ARG builds. All substantive conclusions hold identically on both
+substrates; absolute ages remain build-dependent (compare percentiles across
+builds, never ages).
+
+## Appendix C. Genome-wide exact clade test (the pilot's Q2, answered for every class)
+
+The delivered bundle ships `sv_phase_pilot.py`: an exact single-origin test for
+unphased SV genotypes on the dated ARG (Stage A phase-free ancestry enrichment;
+Stage B exact clade-consistency with induced phase; Stage C certificate over all
+admissible phases). We ran it verbatim (his defaults, his ARG) on ALL 256 loci and all 8,032 structural classes - not only the candidates - via `scripts/run_sv_pilot_all.sh` + `analysis/sv_pilot_scan.py` (output: `/moosefs/laurap/old_dups/demoselex_exp/pilot_run/pilot_genome.csv`, 23,920 class x position rows - outside the repo, alongside the per-chromosome tables and logs in the same directory).
+
+**The base rate (Q2 asked genome-wide):**
+
+| certificate | share of evaluations |
+|---|---|
+| NO-CLADE | 23,803 (99.5%) |
+| SINGLE-ORIGIN-CONSISTENT | 114 (0.5%) |
+| NO-HET | 3 |
+
+5 classes (0.1% of 8,032) are single-origin at every evaluated position
+(TTC28 x2, MAP3K2, SPATA5, MEI4); 89 (1.1%) at >= 1 position. A megabase
+structural class is essentially never an exact genealogical clade - the exact
+test confirms, at ARG resolution, what the multi-anchor age percentiles said
+(Section 5): **the class label is not a lineage**. Confinement (tau*) and exact
+clade-consistency are different statements: 64/4,198 tau*-confined classes are
+single-origin somewhere (1.5%) vs 25/3,834 distributed (0.65%) - a weak positive
+association only. dom_share ~ 0.5-0.65 means majority concentration, not
+cladal descent.
+
+**The 13 ROBUST candidates under Q2:** every one is NO-CLADE (fit errors 60 -
+1,830 genotypes; n_origins 4 - 5,158). None is an exact clade - including the
+tau*-confined three (ADGRG7.4, THSD7B.2, HLA-A.19). What separates the
+candidates instead is Stage A (phase-free ancestry enrichment): 10/13 have
+carriers significantly ancestry-conriched (permutation p at the 5,000-draw
+floor, p = 0.0002) - CYP2D7.1, KLRC1.1, OR2L2.1, CFHR1.1, ZNF146.2, ABCA13.1,
+ADGRG7.4, THSD7B.2, HLA-A.19, OR2J2.17 - while TARP.1 (p = 0.88), UPF2.1
+(p = 0.76) and HLA-A.5 (p = 1.00) rise without ancestry concentration at all:
+genuinely cosmopolitan classes.
+
+**Operational notes from the genome-wide run** (worth reporting upstream):
+
+- ancients are dropped from the input (the ARG contains only the 3,202
+  moderns), matching the static analyzer's behavior;
+- 6 loci straddle two chunk files and are degraded to midpoint-only;
+- TPTE2 (chr13:19.3-19.6 Mb, pericentromeric) has NO tree coverage on either
+  build: the chunk named chr13_10000000_20000000 is actually trimmed to
+  13,999,701 bp. The pilot crashes loudly there (`ts.at` out of bounds via the
+  filename-trusting chunk lookup); the static analyzer had been silently
+  skipping the locus all along (zero TPTE2 rows in every summary.csv). The
+  pilot's loud failure is the better behavior.
+
+**Interpretation.** This is the genome-scale confirmation of the lineage-scan
+note's premise: the strongest available statement about a *label* is
+descriptive. The candidates' rises are real as frequency changes of structural
+classes (the temporal layer), but no candidate is a young clade - the
+selection question moves to erik's lineage-resolved program (allele placed on
+backgrounds, realized-genealogy nulls), which is the correct instrument for
+what happens next. The Stage A split (ancestry-enriched vs cosmopolitan
+risers) is the first axis of that next step and is already computed.
+
+## Appendix D. Structural phase: likegt labels onto VCF/ARG haplotype space
+
+Likegt's hap1/hap2 assignments are per-(sample, locus) arbitrary numbering
+(read-based, no genome-wide phasing input) - measured: S vs SW is ~52/48 over
+280,524 het (sample, locus) rows. HPRC assembly #1/#2 is equally unrelated to
+VCF hap order (all 223 cohort donors mixed ~50/50 across loci). Neither
+numbering can be assumed; per-locus linkage is the only valid route.
+
+**Method** (`analysis/phase_link.py`): each assigned path is a real HPRC donor
+haplotype segment. Its sequence is reconstructed from the per-locus GFA,
+aligned to the GRCh38 window (minimap2 -x asm20 -c), and read at every site
+where the sample's two ARG-phased haplotypes differ; the 2x2 match gives the
+orientation, with concordance = 1 - (donor-sample divergence at het sites).
+
+**Results genome-wide** (280,524 het rows, 256 loci):
+- 83.4% decided (mean best-diagonal concordance 0.888; mean gap 0.776 -
+  usually decisive), 10.5% AMBIG, 6.1% too-few-sites, TPTE2 no coverage
+- 16,101 rows are self-assignments (223 cohort members are HPRC donors):
+  assembly-vs-VCF phase agreement mean 0.959, 51% perfect at all het sites
+
+**Validation** (`analysis/phase_link_trio_check.py`): phase-aware Mendelian
+transmissions - child's paternal ARG hap identified by SNP match, the
+structural cluster must ride the transmitted parent hap. 57,313 checks
+(602 trios, 227 loci): **86.9% phase-consistent**. Mismatches: 6.4%
+phase-swaps, 6.7% de-novo/call errors. Hard-list loci median 0.649 vs
+0.938 elsewhere - independent confirmation of the QV-free hardness metric by
+Mendelian logic. Candidate loci: THSD7B 100%, UPF2 100%, OR2J2 98.9%,
+CFHR1 97.3%, ADGRG7 95.9%, HLA-A 96.2%, KLRC1 96.0%, ABCA13 95.4%;
+weaker: ZNF146 64.1% (hard), TARP 74.7%, CYP2D7 79.6%, OR2L2 84.8%.
+
+**Combined VCFs** (`analysis/build_combined_vcf.py`, runner
+`scripts/run_combined_vcf_all.sh`, output
+`data/derived/old_dups/combined_vcf/<LOCUS>.combined.vcf.gz`, tabix-indexed):
+per locus, all phased 1000G panel records in [lo-5kb, hi+5kb] unchanged, plus
+one biallelic symbolic record per structural class at the locus midpoint
+(REF = reference base, ALT = <CLS:k>), GT phased in VCF hap space from the
+link ('|' where decided, '/' where not - never guessed; '.' for uncalled).
+256 loci, 9,865 class records, 807 MB. Any standard tool can now treat the
+structural classes as ordinary phased variants (LD, haplotype matching,
+imputation checks) - the direct input to the lineage program's within-/
+between-background decomposition.
+
+**Outputs of this workstream** (all gitignored results, outside the repo tree
+at `/moosefs/laurap/old_dups/demoselex_exp/`):
+- `phase_link_run/<LOCUS>.csv` + merged `phase_link_genome.csv`: per
+  (sample, locus) orientation and phased cluster labels (`arg_cluster_hap0/1`)
+- `phase_link_run/trio_check.csv`: the 57,313 Mendelian checks with per-locus
+  agreement rates (use as the per-locus phase-reliability weight)
+- `data/derived/old_dups/combined_vcf/`: the 256 combined VCFs
+
+Cross-references: this is the WP2 donor-side ingredient of
+`docs/next-steps-arg-sv-phasing.md` (the 223-donor assembly-to-VCF-hap map is
+`phase_link_genome.csv` itself), and the input substrate for Q1 of
+`docs/lineage-resolved-selection.md` (within- vs between-background rise),
+which can now be computed for every class genome-wide.
