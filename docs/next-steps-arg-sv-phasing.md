@@ -233,6 +233,9 @@ WP8 homoplasy/mutation rate (3d) ← after G1
 
 ## 5. Phasing: what we will and will not do
 
+Design rationale and the claim hierarchy (what ancients may and may not be used to
+establish) are in `docs/arg-ancient-architecture.md`.
+
 **Will.** Anchor assembly haplotypes to the panel by base-string matching with recombination
 segmentation; use the exact clade-consistency test as the referee, since it is polynomial and
 needs no sampling; place (not phase) pseudo-haploid ancients; treat the donor/non-donor

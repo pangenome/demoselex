@@ -42,6 +42,10 @@ clade. A rise measured on a non-lineage is a rise of a label.
 The strongest available statement about a *label* is therefore descriptive. The strongest
 available statement about a *lineage* is mechanistic. That is the whole argument.
 
+The architecture that makes this possible — moderns inferred, ancients placed, and the
+claim hierarchy that decides how much weight each kind of evidence carries — is fixed in
+`docs/arg-ancient-architecture.md`. Read that first if any claim below looks too strong.
+
 ## 3. The three substitutions
 
 **Unit: allele -> allele on a lineage.**
