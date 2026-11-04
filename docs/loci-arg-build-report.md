@@ -543,3 +543,105 @@ Cross-references: this is the WP2 donor-side ingredient of
 `phase_link_genome.csv` itself), and the input substrate for Q1 of
 `docs/lineage-resolved-selection.md` (within- vs between-background rise),
 which can now be computed for every class genome-wide.
+
+## Appendix E. Class construction in detail: from likegt paths to cluster labels
+
+How the integer class labels in `alleles_clusters.tsv` / `allele_labels_clusters.tsv`
+were produced: the exact inputs, the command, and every design decision.
+
+### E.1 The five input files
+
+| input | what it is | upstream |
+|---|---|---|
+| `svs_refined.hgsvcv3.bed` | the 256 locus spans (GRCh38): chrom, start, end, gene - defines locus identity, midpoint `pos`, and the `start`/`end` columns | refined SV/dup call set |
+| `geno_3202_fa/geno_3202_master.tsv.gz` | modern genotypes, one row per (sample, locus): sample, locus, hap1, hap2, cosine, graph_qv, reads_realigned, nodes_used; hap1/hap2 are **assigned donor paths** like `HG00621#2#CM087873.1:38485010-38771168` | `likegt geno` (SLURM array): each of the 3,202 moderns' reads realigned to the per-locus path catalog, best pair by coverage cosine |
+| `aDNA_real_1x_geno/results/*.geno1.tsv` | ancients: one file per sample (1,628), same schema - likegt on the 1x reads (pseudo-haploid, effectively one haplotype draw; the table still reports the best hap1/hap2 pair) | the aDNA genotyping run |
+| `old_dups_metadata-V1_dated.tsv` | date_mean_BP, date_sd_BP, date_method, cultural_genetic_context per ancient (feeds `dates.tsv`, not the labels) | AADR-derived dating |
+| `cosi_like/mds/paths_<locus>.tsv` (+ `mds_summary.tsv`) | `idx, path, cluster` for every catalog path - the MDS/DBSCAN clustering output; summary QC: k, silhouette, noise_frac per locus | odgi cosine distances -> exact MDS -> DBSCAN on the distance matrix (full methods: `cosi_like/mds/MDS_CLUSTERING_REPORT.md`) |
+
+### E.2 The command
+
+```bash
+.venv/bin/python analysis/build_input_tables.py \
+    --bed          /moosefs/laurap/old_dups/svs_refined.hgsvcv3.bed \
+    --modern-geno  /moosefs/raid5/lpignata/old_dups/geno_3202_fa/geno_3202_master.tsv.gz \
+    --geno-dir     /moosefs/laurap/old_dups/aDNA_real_1x_geno/results \
+    --metadata     /moosefs/laurap/old_dups/old_dups_metadata-V1_dated.tsv \
+    --mds          /moosefs/laurap/old_dups/cosi_like/mds \
+    --min-qv       0
+```
+
+`--min-qv 0` is deliberate: likegt's `graph_qv` is NOT trusted as a filter
+(early design decision). Call difficulty is instead measured data-internally
+by the ancient/modern class-distribution overlap (Section 8, the [HARD] flag).
+
+### E.3 Steps (code references: `analysis/build_input_tables.py`)
+
+1. **path_key normalization** - every likegt path ID loses its `:start-end`
+   suffix (`HG00621#2#CM087873.1:38485010-38771168` ->
+   `HG00621#2#CM087873.1`): the interval is the *graph* interval, not a
+   stable identity.
+2. **Load genotypes**: 3,202 moderns from the master; 1,628 ancients from
+   the per-sample files (3-retry read for moosefs transient errors; unreadable
+   -> all-NA rows). Loci = union, required to exist in the BED.
+3. **Load cluster maps**: per locus, path_key -> cluster_id (raw MDS/DBSCAN
+   id); QC from mds_summary.tsv.
+4. **Label map per locus** (`cluster_labels`): over the union of *assigned*
+   path keys (moderns UNION ancients) - count distinct assigned paths per
+   MDS cluster; renumber clusters by descending count -> **class labels 1..k**
+   (ties by cluster id); then every noise path (cluster -1) and any path
+   missing from the map gets a **private label k+1, k+2, ...** in sorted
+   order. Never merged, never NA.
+5. **Write**:
+   - `allele_labels_clusters.tsv`: locus, path_key, **cluster_id (raw MDS
+     id, -1 for noise)**, **allele (renumbered class)** - the label map
+   - `alleles_clusters.tsv`: the full grid, 256 loci x (3,202 + 1,628) =
+     1,236,481 rows: chrom, pos(midpoint), sample, allele1, allele2, path1,
+     path2, cluster_k, silhouette, noise_frac, start, end; NA where uncalled
+   - `dates.tsv`: dates from the metadata; moderns = 0 BP
+
+### E.4 The three orderings that are easy to conflate
+
+Per locus there are three different "sizes", and none implies another:
+
+1. **catalog paths** per MDS cluster (what the MDS plot shows: ~466 paths
+   per locus distributed over k clusters + noise)
+2. **assigned paths** per cluster (what the class renumbering actually
+   ranks): a cluster with 465 catalog paths can lose the "class 1" slot to a
+   smaller cluster with more assigned paths. This flips at 7 loci: GOLGA6D,
+   LPA, KATNAL2, HLA-DQA1, CHST5, C2orf78, ANKRD36C
+3. **carrier haplotypes** per class (what selection analyses see): a single
+   popular donor path can carry hundreds of haplotypes (ZNF146 class 2:
+   2,111 haps via 5 assigned paths of a 6-path cluster)
+
+The reconciliation table `data/derived/old_dups/cluster_class_map.tsv`
+(`analysis/cluster_class_map.py`, decoder) joins all three levels per locus:
+MDS cluster -> catalog paths -> assigned paths -> class label -> carrier haps,
+plus one row per private (noise-path) class.
+
+### E.5 Design decisions and their reasons
+
+- **Noise paths -> private labels, never NA**: dropping would delete every
+  sample whose best match is an outlier path (~15% of calls genome-wide,
+  78-86% at the hardest loci); merging would fabricate a heterogeneous
+  pseudo-class. Private labels keep all calls. Cost: the class count inflates
+  (8,032 "classes" genome-wide vs ~2-10 real clusters per locus); most
+  classes are single-donor-path families with 1-40 carriers.
+- **Class 1 is not guaranteed to be the biggest cluster** (E.4.2) - and class
+  number is not comparable across loci; always join through
+  `allele_labels_clusters.tsv` / the decoder.
+- **Real clusters vs private classes stratify naturally** (cluster rows vs
+  private rows in the decoder) - recommended for any downstream analysis,
+  since single-path classes can look artificially lineage-like.
+
+### E.6 Historical fossils (why the names are what they are)
+
+The script was first run WITHOUT `--mds` (labels 1..k by sorted path key;
+moderns from `gene_cn/all_copies_identity.tsv`, only 233 assembly donors).
+Two pivots produced the current scheme: (a) moderns switched to the
+read-based `geno_3202` (all 3,202 in the ARG cohort), because path-key labels
+turned out to be almost all private - 1 modern carrier each, analysis
+vacuous; (b) labels switched to MDS-cluster identity, which defines shared
+structural families. The `_clusters` suffix in the output filenames and the
+`suffix = '_clusters' if cl_of else ''` branch in the code are fossils of
+that history.
