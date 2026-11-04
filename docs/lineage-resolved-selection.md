@@ -48,13 +48,35 @@ claim hierarchy that decides how much weight each kind of evidence carries — i
 
 ## 3. The three substitutions
 
-**Unit: allele -> allele on a lineage.**
+**Unit: allele -> allele on a lineage, defined FOCALLY.**
 An allele is placed on the specific haplotype backgrounds that carry it, at the leaves of
 the dated ARG, with a carrier clade where one exists. Phase is not invented: for moderns,
 heterozygote assignment is exact given a clade (the consistency test is polynomial); where
 an HPRC v2 assembly haplotype is available the placement is an observation; for ancients,
 a pseudo-haploid call *is* one haplotype draw, so there is nothing to phase — the sample is
 placed.
+
+Crucially the haplotype is a **focal** object, not a locus-wide class. A class defined across a
+genotyping interval of one to several megabases spans hundreds of local trees, so it is a mosaic
+by construction and can never be a clade - which is exactly what the genome-wide run measured
+(99.5% NO-CLADE over 8,032 locus-wide classes). The unit is therefore the haplotype **at the
+variant**: the maximal interval around the call over which the carriers' relationships in the
+tree sequence do not change - written **w\*** - with the haplotype identified by the clade root
+node inside that interval. w\* is measured per variant, not chosen, and is reported together
+with the informative-marker budget inside it.
+
+Two consequences follow. The mosaic problem largely disappears, because inside one tree there is
+nothing to be a mosaic of, so segmentation is needed only for variants whose flanking structure
+genuinely spans a boundary. And the unit becomes comparable across variants: it has a tree, an
+age and an origin count, which a locus-wide cluster does not.
+
+Where w\* is very small, or the marker budget inside it is thin, the haplotype is simply not
+identifiable - and saying so is a result, not a gap.
+
+**This yields the plan's first falsifiable prediction:** re-tested at focal windows, the
+NO-CLADE rate must fall sharply. If focal haplotypes are still overwhelmingly NO-CLADE, the unit
+was not the problem and something deeper is wrong (mappability, ascertainment, or a real absence
+of cladal structure).
 
 **Null: demographic model -> realized genealogy.**
 Today the null is `sqrt(p(1-p)t/2Ne)` at fixed Ne, genome-wide. After placement the null is
@@ -86,7 +108,8 @@ Decompose allele frequency change per time bin into within-lineage and between-l
 using placed ancients. Null: the same decomposition under date permutation. Kills turnover.
 
 **Q2. Is the carrier set even a lineage?**
-Exact clade-consistency test over every admissible phase. Returns single-origin, the clade,
+Exact clade-consistency test over every admissible phase. Returns single-origin, the clade, **Evaluate at focal windows (w\*)** rather than at
+start/mid/end of a megabase, and never on a locus-wide class.
 the induced phase, and `clade_fit_errors` (the minimum number of genotypes that must be wrong
 to make the carriers cladal). Kills label drift, merged calls, mismapping. **This is the
 cheapest question and it should be asked of every candidate first.**
@@ -133,6 +156,7 @@ One row per (allele, locus, lineage), with time on it:
 
 ```
 locus  chrom  start  end  allele  n_carriers  freq_modern
+w_star  marker_budget  positions_evaluated
 single_origin  n_origins  n_feasible_clades  clade_fit_errors
 age_lo  age_hi  age_median  phase_induced
 background_n  dom_share  dom_share_tau200  dom_share_tau500  tau_star
@@ -180,6 +204,9 @@ question asked in the coordinate system where the confound does not exist.
 
 Success is not more candidates. It is:
 
+0. the focal-window prediction tested: the NO-CLADE rate rerun at w\*
+   compared against the measured 99.5% locus-wide base rate, reported
+   whichever way it goes;
 1. a candidate list where every row has a lineage, a date interval, a mode, an origin count,
    a mutation-rate null, and two independent age constraints;
 2. the 13 re-derived into whatever survives — plausibly a few lineages and a documented

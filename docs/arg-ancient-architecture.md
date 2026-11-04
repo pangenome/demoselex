@@ -64,6 +64,9 @@ Every ancient-derived statement carries the strength of the evidence behind it. 
    Robust to placement.
 3. **Ancestry identity.** "This ancient carried the allele on background B" depends entirely
    on placement, and placement is a nearest-relative match. Weakest of the three; must carry a
+   Place using **focal-window** markers around the call, not locus-wide ones:
+   matching inside one local tree is the informative comparison, and averaging
+   over a megabase of irrelevant history is how a placement silently goes wrong.
    placement confidence, and conclusions must be re-run with low-confidence placements dropped.
 
 The ordering is not stylistic. Rows 1 and 2 survive placement error; row 3 does not. Reporting

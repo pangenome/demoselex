@@ -208,6 +208,13 @@ contiguous block, not the summed overlap.)
 
 **Rules that follow, and that all locus inference must obey:**
 
+**Unit vs frame (added 2026-10-24).** The locus interval is the marker pool and
+the mask - it is NOT the haplotype. A class spanning a whole locus is a mosaic of
+hundreds of local trees and cannot be a clade. The haplotype unit is the FOCAL
+haplotype at the variant: w\*, the maximal interval over which the carriers'
+relationships do not change, clipped to the marker mask. See
+`docs/lineage-resolved-selection.md` section 3.
+
 1. **Frame = the BED locus interval.** Not the SV call, not the gene. Flank widths, masks and
    anchors are all derived from the frame per locus - never a fixed +/-20 kb or +/-200 kb
    constant, which lands inside the hole at exactly the loci we care about.
